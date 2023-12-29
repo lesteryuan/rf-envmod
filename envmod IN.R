@@ -36,17 +36,61 @@ envmod_IN <- function(envdata, pred, var = "cond") {
         if (var =="tss") {
             ##set everything with a "<" to NA
             incvec <- regexpr("<", df1$TSS..mg.l.) != -1
-            print(sum(incvec))
-            df1$TSS..mg.l.[incvec] <- NA
-            ## set every measurement less than 10 to NA
-            df1$TSS..mg.l. <- as.numeric(df1$TSS..mg.l.)
-            print(summary(df1$TSS..mg.l.))
-            df1 <- df1[!is.na(df1$TSS..mg.l.),]
-            df1$tss <- log(df1$TSS..mg.l.)
+            print(table(df1$TSS..mg.l.[incvec]))
 
-            require(lme4)
-            mod <- lmer(tss ~ 1 + (1|STATION_NAME), data = df1)
-            print(summary(mod))
+            date0 <- strptime(df1$ACTIVITY_END_DATE,
+                              format = "%m/%d/%Y %H:%M")
+            df1$mon <- date0$mon + 1
+            df1$year <- date0$year + 1900
+            df1$yday <- date0$yday
+
+            ## change in the censoring level over time
+            print(table(df1$TSS..mg.l.[incvec],
+                        df1$year[incvec]))
+
+            ## restrict to >= 2015 to reduce the range of censoring
+            selyear <- df1$year >= 2015
+            df1 <- df1[selyear,]
+
+            ## drop censors at 10
+            incvec <- regexpr("<", df1$TSS..mg.l.) != -1
+            print(table(df1$TSS..mg.l.[incvec]))
+            incvec <- df1$TSS..mg.l. == "<10" |
+                df1$TSS..mg.l. == "<12"
+            df1$TSS..mg.l.[incvec] <- NA
+
+            incvec <- regexpr("<", df1$TSS..mg.l.) != -1
+            print(table(df1$TSS..mg.l.[incvec]))
+
+            ## set <5 and <6 to 2.5
+            incvec <- df1$TSS..mg.l. == "<5" |
+                df1$TSS..mg.l. == "<6"
+            df1$TSS..mg.l.[incvec] <- "2.5"
+            incvec <- regexpr("<", df1$TSS..mg.l.) != -1
+            print(table(df1$TSS..mg.l.[incvec]))
+
+            ## set <2.5 and <2.6 to 1.25
+            incvec <- df1$TSS..mg.l. == "<2.5" |
+                df1$TSS..mg.l. == "<2.6"
+            df1$TSS..mg.l.[incvec] <- "1.25"
+            incvec <- regexpr("<", df1$TSS..mg.l.) != -1
+            print(table(df1$TSS..mg.l.[incvec]))
+
+            df1$TSSnum <- df1$TSS..mg.l.
+            df1$TSSnum <- as.numeric(df1$TSSnum)
+            df1 <- df1[!is.na(df1$TSSnum),]
+            df1$tss <- log(df1$TSSnum)
+
+            ## most samples are Apr to Oct so select those months
+            incvec <- df1$mon >= 4 & df1$mon <= 10
+            df1 <- df1[incvec,]
+
+            ## select sites with at least 3 samples
+            nvis <- table(df1$STATION_NAME)
+            id.sav <- names(nvis)[nvis >= 3]
+            incvec <- rep(F, times = nrow(df1))
+            for (i in id.sav) incvec <- incvec | df1$STATION_NAME == i
+            df1 <- df1[incvec,]
 
             tss.mn <- tapply(df1$tss, df1$STATION_NAME, mean)
             df2 <- data.frame(STATION_NAME = names(tss.mn),
@@ -79,7 +123,6 @@ envmod_IN <- function(envdata, pred, var = "cond") {
     print(varlist)
     print(nrow(df2))
     df1 <- merge(df2, pred, by.y = "LSite", by.x = "STATION_NAME")
-    print(nrow(df1))
 
     ## drop missing kfact
 #    incvec <- !is.na(df1$kffactws)
@@ -97,26 +140,55 @@ envmod_IN <- function(envdata, pred, var = "cond") {
     predlist <- as.list(rep(NA, times = length(dflist)))
     modlist <- as.list(rep(NA, times = length(dflist)))
 
+
     for (i in 1:length(dflist)) {
+        print(summary(dflist[[i]]$LATITUDE_MEASURE))
         modlist[[i]] <- ranger(data = dflist[[i]][, c(var, varlist)],
                       dependent.variable.name = var,
-                      num.trees = 5000, importance = "permutation")
+                               num.trees = 5000, importance = "permutation")
+
+        print(modlist[[i]])
 
         predlist[[i]] <- modlist[[i]]$predictions
+        vimport <- modlist[[i]]$variable.importance
+        vimport <- rev(sort(vimport))
+        print(vimport[1:15])
+
     }
+    stop()
+
     predall <- c(predlist[[1]], predlist[[2]])
 
     dev.new()
     par(mar = c(4,4,1,1), mgp = c(2.3,1,0), bty = "l")
     plot(predall, yall, pch = 21, col = "grey", bg = "white", axes = F,
-         xlab = "Predicted", ylab ="Observed")
+         xlab = "Predicted TSS", ylab ="Observed TSS")
+    points(predall[1:nrow(dflist[[1]])],
+           yall[1:nrow(dflist[[1]])], pch = 21, col = "black",
+           bg = "grey")
     logtick.exp(0.001, 10, c(1,2), c(T,T))
     abline(0,1)
     print(mean((predall - yall)^2))
 
-#    vimport <- mod$variable.importance
-#    vimport <- sort(vimport)
-#    print(vimport)
+    ## plot partial dependence relationship
+    ## set up dataframe for calculating partial dependence relationship
+    new.data <- data.frame(matrix(NA, ncol = length(varlist), nrow = 40))
+    names(new.data) <- varlist
+    for (i in varlist) {
+        new.data[, i] <- median(df1[, i])
+    }
+    varpick <- "pctcrop2019ws"
+    new.data[, varpick]<- seq(min(df1[,varpick]),
+                                  max(df1[,varpick]), length = 40)
+
+    dev.new()
+    par(mar = c(4,4,1,1), mgp = c(2.3,1,0), bty = "l")
+    predout <- predict(modlist[[1]], new.data)
+    plot(new.data[, varpick], predout$predictions,
+         xlab = "Percent row crop", ylab = "Change in ln(TSS)")
+    stop()
+
+
     ## data frame with human activities set to zero
     varadj <- c("pctimp2019ws", "pcturbop2019ws", "pctcrop2019ws")
     predref <- as.list(rep(NA,times=2))
@@ -146,27 +218,13 @@ envmod_IN <- function(envdata, pred, var = "cond") {
            cex = cex0)
     stop()
 
-    ## plot partial dependence relationship
-    ## set up dataframe for calculating partial dependence relationship
-    new.data <- data.frame(matrix(NA, ncol = length(varlist), nrow = 40))
-    names(new.data) <- varlist
-    for (i in varlist) {
-        new.data[, i] <- median(df1[, i])
-    }
-    varpick <- "pctcrop2019ws"
-    new.data[, varpick]<- seq(min(df1[,varpick]),
-                                  max(df1[,varpick]), length = 40)
-
-    dev.new()
-    predout <- predict(mod, new.data)
-    plot(new.data[, varpick], predout$predictions, xlab = varpick)
 
 
 
 }
 
-envmod_IN(condpred, pred, var = "cond")
-#envmod_IN(tsspred, pred, var = "tss")
+#envmod_IN(condpred, pred, var = "cond")
+envmod_IN(tsspred, pred, var = "tss")
 
 envmod <- function(dfenv, idname) {
     require(ranger)
