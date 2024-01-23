@@ -17,7 +17,7 @@ envmod_IN <- function(envdata, pred, var = "cond") {
     ## drop kffact for now because of incomplete coverage
     varlist <- varlist[-which(varlist=="kffactws")]
 
-
+    ## initial data preparation
     if (var == "cond") {
         df1$cond <- log(df1$Conductance..uS.cm.)
         ## drop 6 outliers
@@ -25,6 +25,7 @@ envmod_IN <- function(envdata, pred, var = "cond") {
         cond.mn <- tapply(df1$cond, df1$STATION_NAME, mean)
         cond.sd <- tapply(df1$cond, df1$STATION_NAME, sd)
 
+        ## calculate site mean values
         nsamp <- tapply(df1$cond, df1$STATION_NAME, function(x) sum(!is.na(x)))
         incvec <- nsamp > 0
         cond.mn <- cond.mn[incvec]
@@ -101,6 +102,7 @@ envmod_IN <- function(envdata, pred, var = "cond") {
     }
     pred <- unique.data.frame(pred[, c("LSite", varlist)])
 
+    ## exploratory clustering of predictors
     docluster <- F
     if (docluster) {
         ## cluster predictor variables
@@ -135,12 +137,15 @@ envmod_IN <- function(envdata, pred, var = "cond") {
     abline(v = 39.6)
     incvec <- df1$LATITUDE_MEASURE < 39.6
 
+
     dflist <- split(df1, incvec)
     yall <- c(dflist[[1]][, var], dflist[[2]][, var])
+    LSite <- c(dflist[[1]]$STATION_NAME, dflist[[2]]$STATION_NAME)
+
     predlist <- as.list(rep(NA, times = length(dflist)))
     modlist <- as.list(rep(NA, times = length(dflist)))
 
-
+    ## fit regression model for north and south subsets
     for (i in 1:length(dflist)) {
         print(summary(dflist[[i]]$LATITUDE_MEASURE))
         modlist[[i]] <- ranger(data = dflist[[i]][, c(var, varlist)],
@@ -155,9 +160,15 @@ envmod_IN <- function(envdata, pred, var = "cond") {
         print(vimport[1:15])
 
     }
-    stop()
 
     predall <- c(predlist[[1]], predlist[[2]])
+
+    ## output predicted and observed environmental conditions
+    ## with station id
+    dfout <- data.frame(tss.pred = predall,
+                        tss.obs = yall,
+                        LSite = LSite)
+    return(dfout)
 
     dev.new()
     par(mar = c(4,4,1,1), mgp = c(2.3,1,0), bty = "l")
@@ -186,8 +197,6 @@ envmod_IN <- function(envdata, pred, var = "cond") {
     predout <- predict(modlist[[1]], new.data)
     plot(new.data[, varpick], predout$predictions,
          xlab = "Percent row crop", ylab = "Change in ln(TSS)")
-    stop()
-
 
     ## data frame with human activities set to zero
     varadj <- c("pctimp2019ws", "pcturbop2019ws", "pctcrop2019ws")
@@ -216,15 +225,11 @@ envmod_IN <- function(envdata, pred, var = "cond") {
                          dflist[[2]]$LATITUDE_MEASURE), proj = "")
     points(pout$x, pout$y, pch = 21, col = "grey39", bg = "white",
            cex = cex0)
-    stop()
-
-
-
 
 }
 
-#envmod_IN(condpred, pred, var = "cond")
-envmod_IN(tsspred, pred, var = "tss")
+#dfcond <- envmod_IN(condpred, pred, var = "cond")
+dftss <- envmod_IN(tsspred, pred, var = "tss")
 
 envmod <- function(dfenv, idname) {
     require(ranger)
