@@ -1,3 +1,32 @@
+## explore biological metrics values
+exploremet <- function() {
+    ## figure out unique sample id
+    richness.in$idnew <- paste(richness.in$lsite, richness.in$date, sep = "-")
+
+    ## need to ask mitchell about repeat samples on the same day
+
+    ## pick first sample
+    richness.in <- richness.in[!duplicated(richness.in$idnew),]
+
+    metrics$idnew <- paste(metrics$lsite, metrics$date, sep = "-")
+    nsamp <- table(metrics$idnew)
+    idp <- names(nsamp)[nsamp > 1]
+    incvec <- rep(F, times = nrow(metrics))
+
+    for (i in idp) incvec <- incvec|metrics$idnew == i
+
+    df1 <- metrics[incvec,]
+    print(summary(tapply(df1$individuals.count, df1$idnew, function(x) diff(range(x)))))
+    stop()
+    incvec <- metrics$idnew == idp[1]
+    print(metrics[incvec,])
+
+    plot(log(metrics$individuals.count), log(metrics$taxa.count))
+    stop()
+
+}
+exploremet()
+
 ## model relationship between richness and environmental
 ## variables
 
@@ -128,5 +157,5 @@ richmod <- function(envdat.tss, envdat.cond, pred, richdat) {
 
 }
 
-richmod(envdat.tss = dftss, envdat.cond = dfcond, pred = pred,
-        richdat = richness.in)
+#richmod(envdat.tss = dftss, envdat.cond = dfcond, pred = pred,
+#        richdat = richness.in)
