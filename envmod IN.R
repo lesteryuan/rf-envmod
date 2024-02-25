@@ -4,13 +4,13 @@
 ## 12.21.2023
 ## rerun models, calibrating with IN observations
 
-envmod_IN <- function(envdata, pred, var = "cond") {
+envmod_IN <- function(envdata, pred, var = "cond", lab = "Conductivity") {
     require(ranger)
     varlist <- names(pred)[5:length(names(pred))]
 
     df1 <- envdata
 
-    ## drop forest...correlated with human activity
+    ## drop variables correlated with human activity
 #    varlist <- varlist[-which(varlist == "pctdecid2019ws")]
 #    varlist <- varlist[-which(varlist == "pctmxfst2019ws")]
 #    varlist <- varlist[-which(varlist=="pctsilicicws")]
@@ -22,16 +22,20 @@ envmod_IN <- function(envdata, pred, var = "cond") {
         df1$cond <- log(df1$Conductance..uS.cm.)
         ## drop 6 outliers
         incvec <- df1$cond > 3.5
+
+        ## calculate station mean values
         cond.mn <- tapply(df1$cond, df1$STATION_NAME, mean)
         cond.sd <- tapply(df1$cond, df1$STATION_NAME, sd)
 
-        ## calculate site mean values
         nsamp <- tapply(df1$cond, df1$STATION_NAME, function(x) sum(!is.na(x)))
         incvec <- nsamp > 0
         cond.mn <- cond.mn[incvec]
 
         df2 <- data.frame(STATION_NAME = names(cond.mn),
                           cond = as.vector(cond.mn))
+        hist(df2$cond, breaks = 20, axes = F)
+        logtick.exp(0.001, 10, c(1), c(F,F))
+        axis(2)
     }
     else {
         if (var =="tss") {
@@ -100,7 +104,18 @@ envmod_IN <- function(envdata, pred, var = "cond") {
 #            hist(log(df1$TSS..mg.l))
         }
     }
+
+    ## pred contains the StreamCat predictors
     pred <- unique.data.frame(pred[, c("LSite", varlist)])
+
+    ## combine forests into one and revise varlist
+    pred$forest <- pred$pctconif2019ws + pred$pctdecid2019ws +
+        pred$pctmxfst2019ws
+    varlist <- varlist[-which(varlist == "pctconif2019ws")]
+    varlist <- varlist[-which(varlist == "pctdecid2019ws")]
+    varlist <- varlist[-which(varlist == "pctmxfst2019ws")]
+    ## decided not to include forest because it's the inverse of crop
+#    varlist <- c(varlist, "forest")
 
     ## exploratory clustering of predictors
     docluster <- F
@@ -124,108 +139,117 @@ envmod_IN <- function(envdata, pred, var = "cond") {
 
     print(varlist)
     print(nrow(df2))
-    df1 <- merge(df2, pred, by.y = "LSite", by.x = "STATION_NAME")
+    df1 <- merge(pred, df2,  by.x = "LSite", by.y = "STATION_NAME")
+    print(nrow(df1))
 
     ## drop missing kfact
 #    incvec <- !is.na(df1$kffactws)
 #    df1 <- df1[incvec,]
 #    print(summary(df1))
 
-    ## latitude stratification
-    plot(df1$LATITUDE_MEASURE, df1$rckdepws, xlab = "Latitude",
-         ylab = "Bedrock depth", pch = 21, col = "grey39", bg = "white")
-    abline(v = 39.6)
-    incvec <- df1$LATITUDE_MEASURE < 39.6
-
-
-    dflist <- split(df1, incvec)
-    yall <- c(dflist[[1]][, var], dflist[[2]][, var])
-    LSite <- c(dflist[[1]]$STATION_NAME, dflist[[2]]$STATION_NAME)
-
-    predlist <- as.list(rep(NA, times = length(dflist)))
-    modlist <- as.list(rep(NA, times = length(dflist)))
-
-    ## fit regression model for north and south subsets
-    set.seed(10)
-    for (i in 1:length(dflist)) {
-        print(summary(dflist[[i]]$LATITUDE_MEASURE))
-
-        runrpart<- F
-        if(runrpart) {
-            require(rpart)
-            formstr <- paste(var, "~", varlist[1], sep = " ")
-            for (k in 2:length(varlist)) {
-                formstr <- paste(formstr, varlist[k], sep = "+")
-            }
-            mod <- rpart(as.formula(formstr), data = dflist[[i]], minsplit = 50)
-            print(summary(mod))
-            png(width = 5, height = 4, pointsize = 8, units = "in", res = 600,
-                file = "plot.png")
-            par(mar = c(4,4,1,1))
-            plot(mod, compress= T)
+    ## single run of rpart to give an example tree for presentation
+    runrpart<- F
+    if(runrpart) {
+        require(rpart)
+        formstr <- paste(var, "~", varlist[1], sep = " ")
+        for (k in 2:length(varlist)) {
+            formstr <- paste(formstr, varlist[k], sep = "+")
+        }
+        mod <- rpart(as.formula(formstr), data = dflist[[i]], minsplit = 50)
+        print(summary(mod))
+        png(width = 5, height = 4, pointsize = 8, units = "in", res = 600,
+            file = "plot.png")
+        par(mar = c(4,4,1,1))
+        plot(mod, compress= T)
             text(mod, use.n = F)
-            dev.off()
-        }
-
-        modlist[[i]] <- ranger(data = dflist[[i]][, c(var, varlist)],
-                      dependent.variable.name = var,
-                               num.trees = 5000, importance = "permutation")
-
-        print(modlist[[i]])
-
-        predlist[[i]] <- modlist[[i]]$predictions
-        vimport <- modlist[[i]]$variable.importance
-        vimport <- rev(sort(vimport))
-        print(vimport[1:15])
-
-        if (i == 1) {
-            varsel <- names(vimport)[1:10]
-            print(varsel)
-            lab0 <- c("% impervious", "Latitude",  "Clay", "% row crop", 
-                      "% shrubland", "Permeability", "% herbaceous wetlands",
-                      "Precipitation", "Baseflow index","Runoff")
-            names(lab0) <- varsel
-            print(lab0)
-
-            png(width = 5, height = 5, pointsize = 10, units = "in",
-                res = 600, file = "bars.png")
-            par(mar = c(4,10,1,1), mgp = c(2.3,1,0), bty = "l", las = 1)
-            barplot(vimport[1:10], hor = T, names.arg=lab0, xlab = "Importance")
-            dev.off()
-        }
-
+        dev.off()
     }
 
-    predall <- c(predlist[[1]], predlist[[2]])
+    ## set up bootstrap
+    set.seed(10)
+    isamp <- sample(nrow(df1), nrow(df1))
+    print(nrow(df1))
+    nval <- nrow(df1)/10
+    ip <- round(seq(1, nrow(df1), length = 11))
+    ip2 <- ip-1
+    ip2 <- ip2[-1]
+    ip2[length(ip2)] <- nrow(df1)
+    print(ip)
+    print(ip2)
 
-    ## output predicted and observed environmental conditions
+    ## roll back all human variables to zero
+    new.data <- df1
+    varset <- c("pctcrop2019ws", "pctimp2019ws", "pcthay2019ws",
+                "pctbl2019ws", "pcturbop2019ws", "inorgnwetdep.2008ws",
+                "pctnonagintrodmanagvegws", "pctag2006slp10ws",
+                "npdesdensws")
+    for (i in varset) {
+        new.data[,i] <- 0
+    }
+
+    pred <- rep(NA, times = nrow(df1))
+    predref <- rep(NA, times = nrow(df1))
+
+    for (i in 1:10) {
+        samp0 <- isamp[ip[i]:ip2[i]]
+
+        mod0 <- ranger(data = df1[-samp0, c(var, varlist)],
+                       dependent.variable.name = var,
+                       num.trees = 5000, importance = "permutation")
+#        print(mod0)
+        ## print out top predictors
+     #   print(rev(sort(mod0$variable.importance))[1:15])
+
+        pred[samp0] <- predict(mod0, df1[samp0,])$predictions
+        predref[samp0] <- predict(mod0, new.data[samp0,])$predictions
+    }
+
+    ## plot top 10 most important predictors in a barplot
+    ## also for presentation
+    if (FALSE) {
+        varsel <- names(vimport)[1:10]
+        print(varsel)
+        lab0 <- c("% impervious", "Latitude",  "Clay", "% row crop",
+                  "% shrubland", "Permeability", "% herbaceous wetlands",
+                  "Precipitation", "Baseflow index","Runoff")
+        names(lab0) <- varsel
+        print(lab0)
+
+        png(width = 5, height = 5, pointsize = 10, units = "in",
+            res = 600, file = "bars.png")
+        par(mar = c(4,10,1,1), mgp = c(2.3,1,0), bty = "l", las = 1)
+        barplot(vimport[1:10], hor = T, names.arg=lab0, xlab = "Importance")
+        dev.off()
+    }
+
+    ## set up output file predicted and observed environmental conditions
     ## with station id
-    dfout <- data.frame(cond.pred = predall,
-                        cond.obs = yall,
-                        LSite = LSite)
-    return(dfout)
+    dfout <- data.frame(predicted = pred, observed = df1[, var],
+                        LSite = df1$LSite, predref = predref)
+    print(summary(dfout))
 
-
+    ## generate predicted vs. observed plot
     png(width = 4, height = 4, pointsize = 10, file = "pobs.png",
         res = 600, units = "in")
     par(mar = c(4,4,1,1), mgp = c(2.3,1,0), bty = "l")
-    plot(predall, yall, pch = 21, col = "grey39", bg = "white", axes = F,
-         xlab = "Predicted conductivity", ylab ="Observed conductivity")
+    plot(pred, df1[, var], pch = 21, col = "grey39",
+         bg = "white", axes = F,
+         xlab = paste("Predicted", lab), ylab =paste("Observed", lab))
 #    points(predall[1:nrow(dflist[[1]])],
 #           yall[1:nrow(dflist[[1]])], pch = 21, col = "black",
 #           bg = "grey")
     logtick.exp(0.001, 10, c(1,2), c(T,T))
     abline(0,1)
-    print(mean((predall - yall)^2))
     dev.off()
 
-    ## plot partial dependence relationship
-    ## set up dataframe for calculating partial dependence relationship
+    ## plot selected partial dependence relationships
     varpick <- c("pctcrop2019ws", "pctimp2019ws")
-    png(file = "partial.png", width = 4, height = 3, pointsize = 12,
-        units = "in", res = 600)
-    par(mar = c(4,4,1,1), mgp = c(2.3,1,0), bty = "l", mfrow = c(1,1))
-    for (j in 2:length(varpick)) {
+#    png(file = "partial.png", width = 4, height = 3, pointsize = 12,
+#        units = "in", res = 600)
+    dev.new()
+    par(mar = c(4,4,1,1), mgp = c(2.3,1,0), bty = "l", mfrow = c(1,2))
+    for (j in 1:length(varpick)) {
+        ## set up dataframe for calculating partial dependence relationship
         new.data <- data.frame(matrix(NA, ncol = length(varlist), nrow = 40))
         names(new.data) <- varlist
         for (i in varlist) {
@@ -235,30 +259,30 @@ envmod_IN <- function(envdata, pred, var = "cond") {
         new.data[, varpick[j]]<- seq(min(df1[,varpick[j]]),
                                   max(df1[,varpick[j]]), length = 40)
 
-        predout <- predict(modlist[[1]], new.data)
+        predout <- predict(mod0, new.data)
         plot(new.data[, varpick[j]], predout$predictions,
-             xlab = lab0[varpick[j]], ylab = "Change in ln(cond)", type = "l")
+             xlab = varpick[j],
+              ylab = paste("Change in ln(", lab, ")", sep =""), type = "l")
     }
-    dev.off()
+#    xlab = lab0[varpick[j]],
 
-    ## data frame with human activities set to zero
-    varadj <- c("pctimp2019ws", "pcturbop2019ws", "pctcrop2019ws")
-    predref <- as.list(rep(NA,times=2))
-    for (i in 1:length(dflist)) {
-        new.data2 <- dflist[[i]]
-        for (j in varadj) new.data2[,j] <- 0
-        ## plot "ref" vs. observed difference
-        predref[[i]] <- predict(modlist[[i]], new.data2)$predictions
-    }
-    predref.all <- c(predref[[1]], predref[[2]])
+#    dev.off()
 
+    ## summary stats and histogram of difference between
+    ## ref and obsered
+    print(summary(exp(pred-predref)))
+
+    ## histogram of differences between reference prediction
+    ## and observed condition
     png(file = "plot.png", width = 4, height = 3, pointsize = 10,
         units = "in", res = 600)
     par(mar = c(4,4,1,1), mgp = c(2.3,1,0))
-    hist(exp(predall - predref.all), breaks = seq(0.45, 2.05, by = 0.1),
-         xlab = "Current conductivity/reference conductivity", main = "")
+    hist(exp(pred-predref),
+         breaks = seq(0.75, 1.65, by = 0.1),
+         xlab = paste("Current ", lab, "/reference ", lab, sep = ""), main = "")
     dev.off()
 
+    ## map of changes
     png(file = "map.png", width = 3, height = 4, pointsize = 10,
         units = "in", res = 600)
     par(mar = c(1,1,1,1))
@@ -267,24 +291,25 @@ envmod_IN <- function(envdata, pred, var = "cond") {
 
     par(mar = c(1,1,1,1))
     map("state", region = "indiana", proj = "albers", par = c(30,40))
-    delt <- exp(predall- predref.all) - 1
+    delt <- exp(pred-predref) - 1
     cex0 <- delt
     cex0[cex0 < 0] <- 0
-    cex0 <- cex0*4 + 0.1
+    cex0 <- cex0*4+ 0.1
 
-    pout <- mapproject(c(dflist[[1]]$LONGITUDE_MEASURE,
-                         dflist[[2]]$LONGITUDE_MEASURE),
-                       c(dflist[[1]]$LATITUDE_MEASURE,
-                         dflist[[2]]$LATITUDE_MEASURE), proj = "")
+    pout <- mapproject(df1$LONGITUDE_MEASURE,
+                       df1$LATITUDE_MEASURE, proj = "")
     points(pout$x, pout$y, pch = 21, col = "grey39", bg = "white",
            cex = cex0)
     dev.off()
 
+    return(dfout)
 }
 
-dfcond <- envmod_IN(condpred, pred, var = "cond")
-#dftss <- envmod_IN(tsspred, pred, var = "tss")
+dfcond <- envmod_IN(condpred, pred, var = "cond", lab ="Conductivity")
+#dftss <- envmod_IN(tsspred, pred, var = "tss", lab = "TSS")
 
+
+## this is the national model for environmental conditions
 envmod <- function(dfenv, idname) {
     require(ranger)
     load("predvar.sc.rda")
