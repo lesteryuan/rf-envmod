@@ -7,7 +7,6 @@
 envmod_IN <- function(envdata, pred, var = "cond", lab = "Conductivity") {
     require(ranger)
     varlist <- names(pred)[5:length(names(pred))]
-
     df1 <- envdata
 
     ## drop variables correlated with human activity
@@ -193,12 +192,19 @@ envmod_IN <- function(envdata, pred, var = "cond", lab = "Conductivity") {
     for (i in 1:10) {
         samp0 <- isamp[ip[i]:ip2[i]]
 
-        mod0 <- ranger(data = df1[-samp0, c(var, varlist)],
+        mod0 <- ranger(data = df1[, c(var, varlist)],
                        dependent.variable.name = var,
-                       num.trees = 5000, importance = "permutation")
-#        print(mod0)
+                      num.trees = 5000, importance = "permutation")
+#        mod0 <- ranger(data = df1[-samp0, c(var, varlist)],
+#                       dependent.variable.name = var,
+#                      num.trees = 5000, importance = "permutation")
+        print(mod0)
         ## print out top predictors
-     #   print(rev(sort(mod0$variable.importance))[1:15])
+        print(rev(sort(mod0$variable.importance))[1:15])
+        require(pdp)
+        pout1 <- partial(mod0, "pctcrop2019ws", plot = F)
+        plot(pout1[,1], pout1[,2])
+        stop()
 
         pred[samp0] <- predict(mod0, df1[samp0,])$predictions
         predref[samp0] <- predict(mod0, new.data[samp0,])$predictions
@@ -305,7 +311,8 @@ envmod_IN <- function(envdata, pred, var = "cond", lab = "Conductivity") {
     return(dfout)
 }
 
-dfcond <- envmod_IN(condpred, pred, var = "cond", lab ="Conductivity")
+dffish <- envmod_IN(ibi1, pred, var = "metric.value", lab = "FISH")
+#dfcond <- envmod_IN(condpred, pred, var = "cond", lab ="Conductivity")
 #dftss <- envmod_IN(tsspred, pred, var = "tss", lab = "TSS")
 
 
